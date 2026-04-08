@@ -68,8 +68,8 @@ fn list_sessions(db: &Db, args: &[String]) -> Result<(), Box<dyn std::error::Err
 
     // Header
     println!(
-        "{:<38} {:<40} {:<6} {:<7} {:<10} {}",
-        "SESSION ID", "TARGET", "TYPE", "ROUNDS", "STATUS", "CREATED"
+        "{:<38} {:<40} {:<6} {:<7} {:<10} CREATED",
+        "SESSION ID", "TARGET", "TYPE", "ROUNDS", "STATUS"
     );
     println!("{}", "-".repeat(120));
 
@@ -78,7 +78,12 @@ fn list_sessions(db: &Db, args: &[String]) -> Result<(), Box<dyn std::error::Err
         let target = truncate_path(&session.target_path, 38);
         println!(
             "{:<38} {:<40} {:<6} {:<7} {:<10} {}",
-            session.id, target, session.review_type, round_count, session.status, session.created_at
+            session.id,
+            target,
+            session.review_type,
+            round_count,
+            session.status,
+            session.created_at
         );
     }
 
@@ -126,7 +131,11 @@ fn show_session_detail(db: &Db, partial_id: &str) -> Result<(), Box<dyn std::err
 
             // Show reviews for this round
             let reviews = db.get_reviews_for_round(round.id)?;
-            for reviewer in [ReviewerType::Regular, ReviewerType::Harsh, ReviewerType::Grounded] {
+            for reviewer in [
+                ReviewerType::Regular,
+                ReviewerType::Harsh,
+                ReviewerType::Grounded,
+            ] {
                 let label = match reviewer {
                     ReviewerType::Regular => "regular: ",
                     ReviewerType::Harsh => "harsh:   ",
@@ -134,11 +143,7 @@ fn show_session_detail(db: &Db, partial_id: &str) -> Result<(), Box<dyn std::err
                 };
                 match reviews.iter().find(|r| r.reviewer_type == reviewer) {
                     Some(r) => {
-                        let filename = r
-                            .file_path
-                            .rsplit('/')
-                            .next()
-                            .unwrap_or(&r.file_path);
+                        let filename = r.file_path.rsplit('/').next().unwrap_or(&r.file_path);
                         println!("    {label} {filename} ({} bytes)", r.bytes_written);
                     }
                     None => {

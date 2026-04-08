@@ -262,7 +262,7 @@ fn days_to_ymd(mut days: u64) -> (u64, u64, u64) {
 }
 
 fn is_leap_year(year: u64) -> bool {
-    (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0)
+    (year.is_multiple_of(4) && !year.is_multiple_of(100)) || year.is_multiple_of(400)
 }
 
 #[cfg(test)]
@@ -299,7 +299,11 @@ mod tests {
 
     #[test]
     fn test_reviewer_type_roundtrip() {
-        for rt in [ReviewerType::Regular, ReviewerType::Harsh, ReviewerType::Grounded] {
+        for rt in [
+            ReviewerType::Regular,
+            ReviewerType::Harsh,
+            ReviewerType::Grounded,
+        ] {
             let s = rt.to_string();
             let parsed: ReviewerType = s.parse().unwrap();
             assert_eq!(rt, parsed);

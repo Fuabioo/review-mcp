@@ -1,5 +1,9 @@
 # review-mcp
 
+[![CI](https://github.com/Fuabioo/review-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/Fuabioo/review-mcp/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/Fuabioo/review-mcp/graph/badge.svg)](https://codecov.io/gh/Fuabioo/review-mcp)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
 Deterministic review workflow MCP server backed by SQLite. Replaces token-burning LLM operations (tmp file management, UUID generation, round detection, permission prompts) with fast, atomic, deterministic tool calls.
 
 **1.5 MB binary. No async runtime. No `/tmp`. Persistent audit trail.**

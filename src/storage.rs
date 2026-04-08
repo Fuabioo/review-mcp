@@ -155,10 +155,7 @@ mod tests {
         for entry in fs::read_dir(dir).unwrap() {
             let entry = entry.unwrap();
             let name = entry.file_name().into_string().unwrap();
-            assert!(
-                !name.contains(".tmp."),
-                "temp file left behind: {name}"
-            );
+            assert!(!name.contains(".tmp."), "temp file left behind: {name}");
         }
     }
 

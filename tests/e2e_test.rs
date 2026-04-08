@@ -123,10 +123,14 @@ fn test_e2e_full_workflow() {
         &[
             init_msg(),
             // Create session
-            tool_call(2, "session_create", serde_json::json!({
-                "target_path": "/tmp/e2e-workflow.rs",
-                "review_type": "plan"
-            })),
+            tool_call(
+                2,
+                "session_create",
+                serde_json::json!({
+                    "target_path": "/tmp/e2e-workflow.rs",
+                    "review_type": "plan"
+                }),
+            ),
         ],
     );
     let session_data = extract_tool_text(&responses[1]);
@@ -139,62 +143,102 @@ fn test_e2e_full_workflow() {
         &[
             init_msg(),
             // Write regular review
-            tool_call(3, "review_write", serde_json::json!({
-                "session_id": sid,
-                "round": 1,
-                "reviewer": "regular",
-                "content": "# Regular Review\n\nLGTM"
-            })),
+            tool_call(
+                3,
+                "review_write",
+                serde_json::json!({
+                    "session_id": sid,
+                    "round": 1,
+                    "reviewer": "regular",
+                    "content": "# Regular Review\n\nLGTM"
+                }),
+            ),
             // Write harsh review
-            tool_call(4, "review_write", serde_json::json!({
-                "session_id": sid,
-                "round": 1,
-                "reviewer": "harsh",
-                "content": "# Harsh Review\n\nNeeds work"
-            })),
+            tool_call(
+                4,
+                "review_write",
+                serde_json::json!({
+                    "session_id": sid,
+                    "round": 1,
+                    "reviewer": "harsh",
+                    "content": "# Harsh Review\n\nNeeds work"
+                }),
+            ),
             // Write grounded review
-            tool_call(5, "review_write", serde_json::json!({
-                "session_id": sid,
-                "round": 1,
-                "reviewer": "grounded",
-                "content": "# Grounded\n\nVerified"
-            })),
+            tool_call(
+                5,
+                "review_write",
+                serde_json::json!({
+                    "session_id": sid,
+                    "round": 1,
+                    "reviewer": "grounded",
+                    "content": "# Grounded\n\nVerified"
+                }),
+            ),
             // Round status
-            tool_call(6, "round_status", serde_json::json!({
-                "session_id": sid
-            })),
+            tool_call(
+                6,
+                "round_status",
+                serde_json::json!({
+                    "session_id": sid
+                }),
+            ),
             // Set outcome
-            tool_call(7, "round_set_outcome", serde_json::json!({
-                "session_id": sid,
-                "round": 1,
-                "outcome": "rejected",
-                "comment": "Fix HIGH findings"
-            })),
+            tool_call(
+                7,
+                "round_set_outcome",
+                serde_json::json!({
+                    "session_id": sid,
+                    "round": 1,
+                    "outcome": "rejected",
+                    "comment": "Fix HIGH findings"
+                }),
+            ),
             // Start round 2
-            tool_call(8, "round_start", serde_json::json!({
-                "session_id": sid
-            })),
+            tool_call(
+                8,
+                "round_start",
+                serde_json::json!({
+                    "session_id": sid
+                }),
+            ),
             // Send signal
-            tool_call(9, "session_signal", serde_json::json!({
-                "session_id": sid,
-                "signal_type": "addressed",
-                "source_label": "worker",
-                "comment": "Fixed"
-            })),
+            tool_call(
+                9,
+                "session_signal",
+                serde_json::json!({
+                    "session_id": sid,
+                    "signal_type": "addressed",
+                    "source_label": "worker",
+                    "comment": "Fixed"
+                }),
+            ),
             // Read signals
-            tool_call(10, "session_signals", serde_json::json!({
-                "session_id": sid
-            })),
+            tool_call(
+                10,
+                "session_signals",
+                serde_json::json!({
+                    "session_id": sid
+                }),
+            ),
             // Read grounded review back
-            tool_call(11, "review_read", serde_json::json!({
-                "session_id": sid,
-                "round": 1,
-                "reviewer": "grounded"
-            })),
+            tool_call(
+                11,
+                "review_read",
+                serde_json::json!({
+                    "session_id": sid,
+                    "round": 1,
+                    "reviewer": "grounded"
+                }),
+            ),
             // Get session
-            tool_call(12, "session_get", serde_json::json!({
-                "session_id": sid
-            })),
+            tool_call(
+                12,
+                "session_get",
+                serde_json::json!({
+                    "session_id": sid
+                }),
+            ),
             // List sessions
             tool_call(13, "session_list", serde_json::json!({})),
         ],
@@ -208,7 +252,11 @@ fn test_e2e_full_workflow() {
     // Review writes (1-3) should succeed
     for i in 1..=3 {
         let data = extract_tool_text(&responses[i]);
-        assert!(!is_tool_error(&responses[i]), "response {i} is error: {:?}", responses[i]);
+        assert!(
+            !is_tool_error(&responses[i]),
+            "response {i} is error: {:?}",
+            responses[i]
+        );
         assert!(data["bytes_written"].as_i64().unwrap() > 0);
     }
 
@@ -258,10 +306,14 @@ fn test_e2e_cross_session_access() {
         tmp.path(),
         &[
             init_msg(),
-            tool_call(2, "session_create", serde_json::json!({
-                "target_path": "/home/user/code.rs",
-                "review_type": "code"
-            })),
+            tool_call(
+                2,
+                "session_create",
+                serde_json::json!({
+                    "target_path": "/home/user/code.rs",
+                    "review_type": "code"
+                }),
+            ),
         ],
     );
     let sid = extract_tool_text(&r1[1])["session_id"]
@@ -274,17 +326,25 @@ fn test_e2e_cross_session_access() {
         tmp.path(),
         &[
             init_msg(),
-            tool_call(2, "review_write", serde_json::json!({
-                "session_id": sid,
-                "round": 1,
-                "reviewer": "regular",
-                "content": "# Review from worker\n\nAll good."
-            })),
-            tool_call(3, "session_signal", serde_json::json!({
-                "session_id": sid,
-                "signal_type": "addressed",
-                "source_label": "worker-regular"
-            })),
+            tool_call(
+                2,
+                "review_write",
+                serde_json::json!({
+                    "session_id": sid,
+                    "round": 1,
+                    "reviewer": "regular",
+                    "content": "# Review from worker\n\nAll good."
+                }),
+            ),
+            tool_call(
+                3,
+                "session_signal",
+                serde_json::json!({
+                    "session_id": sid,
+                    "signal_type": "addressed",
+                    "source_label": "worker-regular"
+                }),
+            ),
         ],
     );
     assert!(!is_tool_error(&r2[1]));
@@ -295,17 +355,29 @@ fn test_e2e_cross_session_access() {
         tmp.path(),
         &[
             init_msg(),
-            tool_call(2, "round_status", serde_json::json!({
-                "session_id": sid
-            })),
-            tool_call(3, "session_signals", serde_json::json!({
-                "session_id": sid
-            })),
-            tool_call(4, "review_read", serde_json::json!({
-                "session_id": sid,
-                "round": 1,
-                "reviewer": "regular"
-            })),
+            tool_call(
+                2,
+                "round_status",
+                serde_json::json!({
+                    "session_id": sid
+                }),
+            ),
+            tool_call(
+                3,
+                "session_signals",
+                serde_json::json!({
+                    "session_id": sid
+                }),
+            ),
+            tool_call(
+                4,
+                "review_read",
+                serde_json::json!({
+                    "session_id": sid,
+                    "round": 1,
+                    "reviewer": "regular"
+                }),
+            ),
         ],
     );
 
@@ -328,10 +400,14 @@ fn test_e2e_duplicate_review_error() {
         tmp.path(),
         &[
             init_msg(),
-            tool_call(2, "session_create", serde_json::json!({
-                "target_path": "/tmp/dup-test.rs",
-                "review_type": "code"
-            })),
+            tool_call(
+                2,
+                "session_create",
+                serde_json::json!({
+                    "target_path": "/tmp/dup-test.rs",
+                    "review_type": "code"
+                }),
+            ),
         ],
     );
     let sid = extract_tool_text(&r1[1])["session_id"]
@@ -343,18 +419,26 @@ fn test_e2e_duplicate_review_error() {
         tmp.path(),
         &[
             init_msg(),
-            tool_call(3, "review_write", serde_json::json!({
-                "session_id": sid,
-                "round": 1,
-                "reviewer": "regular",
-                "content": "first write"
-            })),
-            tool_call(4, "review_write", serde_json::json!({
-                "session_id": sid,
-                "round": 1,
-                "reviewer": "regular",
-                "content": "duplicate write"
-            })),
+            tool_call(
+                3,
+                "review_write",
+                serde_json::json!({
+                    "session_id": sid,
+                    "round": 1,
+                    "reviewer": "regular",
+                    "content": "first write"
+                }),
+            ),
+            tool_call(
+                4,
+                "review_write",
+                serde_json::json!({
+                    "session_id": sid,
+                    "round": 1,
+                    "reviewer": "regular",
+                    "content": "duplicate write"
+                }),
+            ),
         ],
     );
 
@@ -376,7 +460,11 @@ fn test_e2e_error_cases() {
         // Unknown tool
         tool_call(3, "nonexistent", serde_json::json!({})),
         // Get nonexistent session
-        tool_call(5, "session_get", serde_json::json!({"session_id": "does-not-exist"})),
+        tool_call(
+            5,
+            "session_get",
+            serde_json::json!({"session_id": "does-not-exist"}),
+        ),
     ]);
 
     assert_eq!(responses.len(), 4);
@@ -437,10 +525,14 @@ fn test_e2e_session_get_by_target() {
         tmp.path(),
         &[
             init_msg(),
-            tool_call(2, "session_create", serde_json::json!({
-                "target_path": "/tmp/find-by-target.rs",
-                "review_type": "manuscript"
-            })),
+            tool_call(
+                2,
+                "session_create",
+                serde_json::json!({
+                    "target_path": "/tmp/find-by-target.rs",
+                    "review_type": "manuscript"
+                }),
+            ),
         ],
     );
     let sid = extract_tool_text(&r1[1])["session_id"]
@@ -452,9 +544,13 @@ fn test_e2e_session_get_by_target() {
         tmp.path(),
         &[
             init_msg(),
-            tool_call(2, "session_get", serde_json::json!({
-                "target_path": "/tmp/find-by-target.rs"
-            })),
+            tool_call(
+                2,
+                "session_get",
+                serde_json::json!({
+                    "target_path": "/tmp/find-by-target.rs"
+                }),
+            ),
         ],
     );
     let session = extract_tool_text(&r2[1]);

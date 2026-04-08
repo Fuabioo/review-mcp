@@ -53,7 +53,10 @@ impl Db {
         let path = Self::db_path()?;
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).map_err(|e| {
-                DbError::Internal(format!("failed to create data dir {}: {e}", parent.display()))
+                DbError::Internal(format!(
+                    "failed to create data dir {}: {e}",
+                    parent.display()
+                ))
             })?;
         }
         let conn = Connection::open(&path)?;
@@ -159,9 +162,7 @@ impl Db {
                 |row| Ok(row_to_session(row)),
             )
             .map_err(|e| match e {
-                rusqlite::Error::QueryReturnedNoRows => {
-                    DbError::NotFound(format!("session {id}"))
-                }
+                rusqlite::Error::QueryReturnedNoRows => DbError::NotFound(format!("session {id}")),
                 other => DbError::from(other),
             })
     }
@@ -214,11 +215,7 @@ impl Db {
     }
 
     #[allow(dead_code)] // Will be used when session complete/abandon tool is added
-    pub fn update_session_status(
-        &self,
-        id: &str,
-        status: SessionStatus,
-    ) -> Result<(), DbError> {
+    pub fn update_session_status(&self, id: &str, status: SessionStatus) -> Result<(), DbError> {
         let now = now_iso8601();
         let rows = self.conn.execute(
             "UPDATE sessions SET status = ?1, updated_at = ?2 WHERE id = ?3",
@@ -236,13 +233,11 @@ impl Db {
         // Verify session exists
         let _ = self.get_session(session_id)?;
 
-        let next_number: i32 = self
-            .conn
-            .query_row(
-                "SELECT COALESCE(MAX(round_number), 0) + 1 FROM rounds WHERE session_id = ?1",
-                params![session_id],
-                |row| row.get(0),
-            )?;
+        let next_number: i32 = self.conn.query_row(
+            "SELECT COALESCE(MAX(round_number), 0) + 1 FROM rounds WHERE session_id = ?1",
+            params![session_id],
+            |row| row.get(0),
+        )?;
 
         let now = now_iso8601();
         self.conn.execute(
@@ -405,7 +400,13 @@ impl Db {
         self.conn.execute(
             "INSERT INTO signals (session_id, signal_type, source_label, comment, created_at)
              VALUES (?1, ?2, ?3, ?4, ?5)",
-            params![session_id, signal_type.to_string(), source_label, comment, now],
+            params![
+                session_id,
+                signal_type.to_string(),
+                source_label,
+                comment,
+                now
+            ],
         )?;
         let id = self.conn.last_insert_rowid();
         Ok(Signal {
@@ -435,9 +436,9 @@ impl Db {
     /// Returns the list of pruned session IDs so the caller can clean up files.
     pub fn prune_sessions_before(&self, before: &str) -> Result<Vec<String>, DbError> {
         // Collect session IDs to prune
-        let mut stmt = self.conn.prepare(
-            "SELECT id FROM sessions WHERE created_at < ?1",
-        )?;
+        let mut stmt = self
+            .conn
+            .prepare("SELECT id FROM sessions WHERE created_at < ?1")?;
         let ids: Vec<String> = stmt
             .query_map(params![before], |row| row.get(0))?
             .collect::<Result<Vec<_>, _>>()?;
@@ -494,8 +495,14 @@ fn row_to_session(row: &rusqlite::Row<'_>) -> Session {
     Session {
         id: row.get_unwrap(0),
         target_path: row.get_unwrap(1),
-        review_type: row.get_unwrap::<_, String>(2).parse().unwrap_or(ReviewType::Custom),
-        status: row.get_unwrap::<_, String>(3).parse().unwrap_or(SessionStatus::Active),
+        review_type: row
+            .get_unwrap::<_, String>(2)
+            .parse()
+            .unwrap_or(ReviewType::Custom),
+        status: row
+            .get_unwrap::<_, String>(3)
+            .parse()
+            .unwrap_or(SessionStatus::Active),
         created_at: row.get_unwrap(4),
         updated_at: row.get_unwrap(5),
     }
@@ -519,7 +526,10 @@ fn row_to_review(row: &rusqlite::Row<'_>) -> Review {
     Review {
         id: row.get_unwrap(0),
         round_id: row.get_unwrap(1),
-        reviewer_type: row.get_unwrap::<_, String>(2).parse().unwrap_or(ReviewerType::Regular),
+        reviewer_type: row
+            .get_unwrap::<_, String>(2)
+            .parse()
+            .unwrap_or(ReviewerType::Regular),
         file_path: row.get_unwrap(3),
         content_hash: row.get_unwrap(4),
         bytes_written: row.get_unwrap(5),
@@ -531,7 +541,10 @@ fn row_to_signal(row: &rusqlite::Row<'_>) -> Signal {
     Signal {
         id: row.get_unwrap(0),
         session_id: row.get_unwrap(1),
-        signal_type: row.get_unwrap::<_, String>(2).parse().unwrap_or(SignalType::Addressed),
+        signal_type: row
+            .get_unwrap::<_, String>(2)
+            .parse()
+            .unwrap_or(SignalType::Addressed),
         source_label: row.get_unwrap(3),
         comment: row.get_unwrap(4),
         created_at: row.get_unwrap(5),
@@ -588,7 +601,9 @@ mod tests {
         let all = db.list_sessions(10, 0, None, None).unwrap();
         assert_eq!(all.len(), 3);
 
-        let code_only = db.list_sessions(10, 0, Some(ReviewType::Code), None).unwrap();
+        let code_only = db
+            .list_sessions(10, 0, Some(ReviewType::Code), None)
+            .unwrap();
         assert_eq!(code_only.len(), 2);
 
         let with_limit = db.list_sessions(1, 0, None, None).unwrap();
@@ -602,7 +617,8 @@ mod tests {
     fn test_update_session_status() {
         let db = test_db();
         let session = db.create_session("/tmp/test.rs", ReviewType::Code).unwrap();
-        db.update_session_status(&session.id, SessionStatus::Completed).unwrap();
+        db.update_session_status(&session.id, SessionStatus::Completed)
+            .unwrap();
 
         let updated = db.get_session(&session.id).unwrap();
         assert_eq!(updated.status, SessionStatus::Completed);
@@ -670,7 +686,13 @@ mod tests {
         let round = db.create_round(&session.id).unwrap();
 
         let review = db
-            .create_review(round.id, ReviewerType::Regular, "/path/review.md", "sha256:abc", 1234)
+            .create_review(
+                round.id,
+                ReviewerType::Regular,
+                "/path/review.md",
+                "sha256:abc",
+                1234,
+            )
             .unwrap();
         assert_eq!(review.reviewer_type, ReviewerType::Regular);
         assert_eq!(review.bytes_written, 1234);

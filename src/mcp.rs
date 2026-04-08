@@ -87,10 +87,8 @@ mod tests {
 
     #[test]
     fn test_success_response_serialization() {
-        let resp = JsonRpcResponse::success(
-            Some(serde_json::json!(1)),
-            serde_json::json!({"ok": true}),
-        );
+        let resp =
+            JsonRpcResponse::success(Some(serde_json::json!(1)), serde_json::json!({"ok": true}));
         let json = serde_json::to_string(&resp).unwrap();
         assert!(json.contains("\"jsonrpc\":\"2.0\""));
         assert!(json.contains("\"ok\":true"));

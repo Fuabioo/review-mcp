@@ -299,9 +299,7 @@ fn handle_session_get(db: &Db, args: &Value) -> Value {
         },
         (None, Some(path)) => match db.find_active_session_by_target(path) {
             Ok(Some(s)) => s,
-            Ok(None) => {
-                return tool_result_error(&format!("no active session for target: {path}"))
-            }
+            Ok(None) => return tool_result_error(&format!("no active session for target: {path}")),
             Err(e) => return tool_result_error(&format!("{e}")),
         },
         (None, None) => {
@@ -487,9 +485,15 @@ fn handle_round_status(db: &Db, args: &Value) -> Value {
     };
 
     let reviews = db.get_reviews_for_round(round.id).unwrap_or_default();
-    let has_regular = reviews.iter().any(|r| r.reviewer_type == ReviewerType::Regular);
-    let has_harsh = reviews.iter().any(|r| r.reviewer_type == ReviewerType::Harsh);
-    let has_grounded = reviews.iter().any(|r| r.reviewer_type == ReviewerType::Grounded);
+    let has_regular = reviews
+        .iter()
+        .any(|r| r.reviewer_type == ReviewerType::Regular);
+    let has_harsh = reviews
+        .iter()
+        .any(|r| r.reviewer_type == ReviewerType::Harsh);
+    let has_grounded = reviews
+        .iter()
+        .any(|r| r.reviewer_type == ReviewerType::Grounded);
 
     let result = serde_json::json!({
         "session_id": session_id,
@@ -592,14 +596,8 @@ fn handle_session_signals(db: &Db, args: &Value) -> Value {
 }
 
 fn handle_session_list(db: &Db, args: &Value) -> Value {
-    let limit = args
-        .get("limit")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(20) as u32;
-    let offset = args
-        .get("offset")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(0) as u32;
+    let limit = args.get("limit").and_then(|v| v.as_u64()).unwrap_or(20) as u32;
+    let offset = args.get("offset").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
     let review_type = args
         .get("review_type")
         .and_then(|v| v.as_str())

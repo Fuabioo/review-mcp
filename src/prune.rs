@@ -53,10 +53,7 @@ pub fn run(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
             .iter()
             .map(|s| dir_size(&storage::session_dir(&s.id)))
             .sum::<u64>();
-        println!(
-            "Would free ~{} of review files.",
-            human_bytes(total_bytes)
-        );
+        println!("Would free ~{} of review files.", human_bytes(total_bytes));
         return Ok(());
     }
 
@@ -141,7 +138,7 @@ fn days_to_ymd(mut days: u64) -> (u64, u64, u64) {
 }
 
 fn is_leap_year(year: u64) -> bool {
-    (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0)
+    (year.is_multiple_of(4) && !year.is_multiple_of(100)) || year.is_multiple_of(400)
 }
 
 fn dir_size(path: &std::path::Path) -> u64 {
