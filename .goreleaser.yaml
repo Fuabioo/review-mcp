@@ -1,0 +1,99 @@
+version: 2
+
+project_name: review-mcp
+
+release:
+  draft: false
+  prerelease: auto
+  mode: replace
+  make_latest: true
+  name_template: "v{{ .Version }}"
+  header: |
+    ## review-mcp {{ .Version }}
+
+    **Deterministic review workflow MCP server backed by SQLite.**
+  footer: |
+    ## Installation
+
+    **Homebrew:**
+    ```bash
+    brew tap Fuabioo/tap
+    brew install review-mcp
+    ```
+
+    **Cargo:**
+    ```bash
+    cargo install review-mcp
+    ```
+
+    **Binary:**
+    Download the archive for your platform from the assets below, extract, and place `review-mcp` in your `$PATH`.
+
+    ---
+    **Full Changelog**: https://github.com/Fuabioo/review-mcp/compare/{{ .PreviousTag }}...{{ .Tag }}
+
+builds:
+  - id: review-mcp
+    builder: rust
+    targets:
+      - x86_64-unknown-linux-gnu
+      - aarch64-unknown-linux-gnu
+      - x86_64-apple-darwin
+      - aarch64-apple-darwin
+
+archives:
+  - formats:
+      - tar.gz
+    name_template: >-
+      {{ .ProjectName }}_
+      {{- title .Os }}_
+      {{- if eq .Arch "386" }}i386
+      {{- else }}{{ .Arch }}{{ end }}
+    files:
+      - README.md
+      - LICENSE*
+
+homebrew_casks:
+  - repository:
+      owner: Fuabioo
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    directory: Casks
+    homepage: "https://github.com/Fuabioo/review-mcp"
+    description: "review-mcp - Deterministic review workflow MCP server backed by SQLite"
+    license: "MIT"
+
+checksum:
+  name_template: "checksums.txt"
+
+snapshot:
+  version_template: "{{ .Tag }}-next"
+
+changelog:
+  use: github
+  format: "{{ .SHA }}: {{ .Message }} (@{{ .AuthorUsername }})"
+  sort: asc
+  filters:
+    exclude:
+      - "skip ci"
+      - "skip-ci"
+      - "^docs:"
+      - "^test:"
+  groups:
+    - title: "Features"
+      regexp: "(?i).*(feat|add|implement|create|initial|new).*"
+      order: 0
+    - title: "Bug fixes"
+      regexp: "(?i).*(fix|resolve|correct|patch|bug).*"
+      order: 1
+    - title: "Documentation"
+      regexp: "(?i).*(docs|documentation|readme).*"
+      order: 2
+    - title: "Improvements"
+      regexp: "(?i).*(improve|enhance|optimize|update|upgrade).*"
+      order: 3
+    - title: "Cleanup"
+      regexp: "(?i).*(cleanup|clean|remove|delete|refactor).*"
+      order: 4
+    - title: "Others"
+      order: 999
