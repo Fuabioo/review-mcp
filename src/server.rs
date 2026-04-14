@@ -26,6 +26,15 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
             }
         };
 
+        // JSON-RPC 2.0: notifications (requests without an id) must not
+        // receive a response. Only write back when the request has an id.
+        if request.id.is_none() {
+            // Still route through handle_request for any side-effects,
+            // but discard the response.
+            let _ = handle_request(&db, request);
+            continue;
+        }
+
         let response = handle_request(&db, request);
         write_response(&mut writer, &response)?;
     }
