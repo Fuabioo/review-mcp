@@ -161,6 +161,72 @@ impl FromStr for SignalType {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Severity {
+    Critical,
+    High,
+    Medium,
+    Low,
+    Info,
+}
+
+impl fmt::Display for Severity {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Critical => write!(f, "critical"),
+            Self::High => write!(f, "high"),
+            Self::Medium => write!(f, "medium"),
+            Self::Low => write!(f, "low"),
+            Self::Info => write!(f, "info"),
+        }
+    }
+}
+
+impl FromStr for Severity {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "critical" => Ok(Self::Critical),
+            "high" => Ok(Self::High),
+            "medium" => Ok(Self::Medium),
+            "low" => Ok(Self::Low),
+            "info" => Ok(Self::Info),
+            other => Err(format!("unknown severity: {other}")),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GroundingVerdict {
+    Confirmed,
+    Disputed,
+    Rejected,
+}
+
+impl fmt::Display for GroundingVerdict {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Confirmed => write!(f, "confirmed"),
+            Self::Disputed => write!(f, "disputed"),
+            Self::Rejected => write!(f, "rejected"),
+        }
+    }
+}
+
+impl FromStr for GroundingVerdict {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "confirmed" => Ok(Self::Confirmed),
+            "disputed" => Ok(Self::Disputed),
+            "rejected" => Ok(Self::Rejected),
+            other => Err(format!("unknown grounding verdict: {other}")),
+        }
+    }
+}
+
 // --- Structs ---
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -192,6 +258,28 @@ pub struct Review {
     pub file_path: String,
     pub content_hash: String,
     pub bytes_written: i64,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Finding {
+    pub id: i64,
+    pub round_id: i64,
+    pub reviewer_type: ReviewerType,
+    pub finding_uid: String,
+    pub severity: Severity,
+    pub category: Option<String>,
+    pub title: String,
+    pub body: String,
+    pub file_path: String,
+    pub line_start: i32,
+    pub line_end: Option<i32>,
+    pub commit_ref: Option<String>,
+    pub code_snippet: Option<String>,
+    pub suggestion: Option<String>,
+    pub grounding_verdict: Option<GroundingVerdict>,
+    pub grounding_rationale: Option<String>,
+    pub source_finding_id: Option<i64>,
     pub created_at: String,
 }
 

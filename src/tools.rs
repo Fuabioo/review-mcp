@@ -1,6 +1,9 @@
 use crate::db::{Db, DbError};
+use crate::git;
 use crate::mcp::{tool_result_error, tool_result_text};
-use crate::models::{ReviewType, ReviewerType, RoundOutcome, SessionStatus, SignalType};
+use crate::models::{
+    GroundingVerdict, ReviewType, ReviewerType, RoundOutcome, SessionStatus, Severity, SignalType,
+};
 use crate::storage;
 use serde_json::Value;
 use std::path::PathBuf;
@@ -196,6 +199,108 @@ pub fn list_tools() -> Value {
             }
         },
         {
+            "name": "finding_add",
+            "description": "Record a single structured finding for a reviewer slot. Each finding carries severity, file_path, line_start, and (auto-detected or client-provided) commit_ref. Multiple findings per reviewer per round. file_path + line_start are required for indexability; use line_start=0 for file-level findings without a specific line.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "session_id": {"type": "string", "description": "Session UUID"},
+                    "round": {"type": "integer", "description": "Round number"},
+                    "reviewer": {
+                        "type": "string",
+                        "enum": ["regular", "harsh", "grounded"],
+                        "description": "Which reviewer slot this finding belongs to"
+                    },
+                    "finding_uid": {
+                        "type": "string",
+                        "description": "Stable per-reviewer ID (e.g. 'UF-001'). Unique within (round, reviewer)."
+                    },
+                    "severity": {
+                        "type": "string",
+                        "enum": ["critical", "high", "medium", "low", "info"],
+                        "description": "Severity level"
+                    },
+                    "title": {"type": "string", "description": "Short headline (one line)"},
+                    "body": {"type": "string", "description": "Full finding description (markdown)"},
+                    "file_path": {
+                        "type": "string",
+                        "description": "Path to the file the finding refers to. Absolute or relative to repo root."
+                    },
+                    "line_start": {
+                        "type": "integer",
+                        "description": "1-based starting line. Use 0 for file-level findings."
+                    },
+                    "line_end": {"type": "integer", "description": "Optional ending line (defaults to line_start)"},
+                    "commit_ref": {
+                        "type": "string",
+                        "description": "Git commit SHA. If omitted, auto-detected from file_path's repo via `git rev-parse HEAD`."
+                    },
+                    "code_snippet": {
+                        "type": "string",
+                        "description": "Verbatim code excerpt anchoring the finding (resilient to line-number drift)"
+                    },
+                    "category": {"type": "string", "description": "Optional taxonomy (security, perf, correctness, ...)"},
+                    "suggestion": {"type": "string", "description": "Optional fix suggestion"},
+                    "grounding_verdict": {
+                        "type": "string",
+                        "enum": ["confirmed", "disputed", "rejected"],
+                        "description": "For grounded reviewer findings: verdict on the source finding"
+                    },
+                    "grounding_rationale": {"type": "string", "description": "Why the verdict was reached"},
+                    "source_finding_id": {
+                        "type": "integer",
+                        "description": "ID of the regular/harsh finding being verified (grounded reviewer only)"
+                    }
+                },
+                "required": ["session_id", "round", "reviewer", "finding_uid", "severity", "title", "body", "file_path", "line_start"]
+            }
+        },
+        {
+            "name": "finding_list",
+            "description": "List structured findings for a round, ordered by severity then file_path:line. Filter by reviewer, severity, or file_path.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "session_id": {"type": "string", "description": "Session UUID"},
+                    "round": {"type": "integer", "description": "Round number (defaults to latest)"},
+                    "reviewer": {
+                        "type": "string",
+                        "enum": ["regular", "harsh", "grounded"],
+                        "description": "Filter by reviewer"
+                    },
+                    "severity": {
+                        "type": "string",
+                        "enum": ["critical", "high", "medium", "low", "info"],
+                        "description": "Filter by severity"
+                    },
+                    "file_path": {"type": "string", "description": "Filter by exact file path"}
+                },
+                "required": ["session_id"]
+            }
+        },
+        {
+            "name": "finding_get",
+            "description": "Get a single finding by ID.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "id": {"type": "integer", "description": "Finding ID"}
+                },
+                "required": ["id"]
+            }
+        },
+        {
+            "name": "finding_delete",
+            "description": "Delete a finding by ID (for fix-ups).",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "id": {"type": "integer", "description": "Finding ID"}
+                },
+                "required": ["id"]
+            }
+        },
+        {
             "name": "session_list",
             "description": "List review sessions with optional filters, ordered by most recent first.",
             "inputSchema": {
@@ -238,6 +343,10 @@ pub fn call_tool(db: &Db, name: &str, args: Value) -> Value {
         "session_signal" => handle_session_signal(db, &args),
         "session_signals" => handle_session_signals(db, &args),
         "session_list" => handle_session_list(db, &args),
+        "finding_add" => handle_finding_add(db, &args),
+        "finding_list" => handle_finding_list(db, &args),
+        "finding_get" => handle_finding_get(db, &args),
+        "finding_delete" => handle_finding_delete(db, &args),
         _ => tool_result_error(&format!("unknown tool: {name}")),
     }
 }
@@ -636,6 +745,189 @@ fn handle_session_list(db: &Db, args: &Value) -> Value {
     tool_result_text(&serde_json::to_string_pretty(&result).unwrap_or_default())
 }
 
+// --- Findings handlers ---
+
+fn handle_finding_add(db: &Db, args: &Value) -> Value {
+    let session_id = match args.get("session_id").and_then(|v| v.as_str()) {
+        Some(s) => s,
+        None => return tool_result_error("missing required parameter: session_id"),
+    };
+    let round_number = match args.get("round").and_then(|v| v.as_i64()) {
+        Some(n) => n as i32,
+        None => return tool_result_error("missing required parameter: round"),
+    };
+    let reviewer = match args
+        .get("reviewer")
+        .and_then(|v| v.as_str())
+        .and_then(|s| ReviewerType::from_str(s).ok())
+    {
+        Some(rt) => rt,
+        None => return tool_result_error("missing or invalid parameter: reviewer"),
+    };
+    let finding_uid = match args.get("finding_uid").and_then(|v| v.as_str()) {
+        Some(s) if !s.is_empty() => s,
+        _ => return tool_result_error("missing or empty parameter: finding_uid"),
+    };
+    let severity = match args
+        .get("severity")
+        .and_then(|v| v.as_str())
+        .and_then(|s| Severity::from_str(s).ok())
+    {
+        Some(sv) => sv,
+        None => return tool_result_error(
+            "missing or invalid parameter: severity (one of critical|high|medium|low|info)",
+        ),
+    };
+    let title = match args.get("title").and_then(|v| v.as_str()) {
+        Some(s) if !s.is_empty() => s,
+        _ => return tool_result_error("missing or empty parameter: title"),
+    };
+    let body = match args.get("body").and_then(|v| v.as_str()) {
+        Some(s) if !s.is_empty() => s,
+        _ => return tool_result_error("missing or empty parameter: body"),
+    };
+    let file_path = match args.get("file_path").and_then(|v| v.as_str()) {
+        Some(s) if !s.is_empty() => s,
+        _ => return tool_result_error("missing or empty parameter: file_path"),
+    };
+    let line_start = match args.get("line_start").and_then(|v| v.as_i64()) {
+        Some(n) if n >= 0 => n as i32,
+        Some(_) => return tool_result_error("line_start must be >= 0"),
+        None => return tool_result_error("missing required parameter: line_start"),
+    };
+    let line_end = args
+        .get("line_end")
+        .and_then(|v| v.as_i64())
+        .map(|n| n as i32);
+    let category = args.get("category").and_then(|v| v.as_str());
+    let code_snippet = args.get("code_snippet").and_then(|v| v.as_str());
+    let suggestion = args.get("suggestion").and_then(|v| v.as_str());
+    let grounding_verdict = args
+        .get("grounding_verdict")
+        .and_then(|v| v.as_str())
+        .and_then(|s| GroundingVerdict::from_str(s).ok());
+    let grounding_rationale = args.get("grounding_rationale").and_then(|v| v.as_str());
+    let source_finding_id = args.get("source_finding_id").and_then(|v| v.as_i64());
+
+    // commit_ref: client-provided wins, otherwise auto-detect
+    let provided_ref = args.get("commit_ref").and_then(|v| v.as_str());
+    let detected_ref;
+    let (commit_ref, commit_ref_source) = match provided_ref {
+        Some(r) if !r.is_empty() => (Some(r), "provided"),
+        _ => {
+            detected_ref = git::detect_commit_ref(file_path);
+            match detected_ref.as_deref() {
+                Some(r) => (Some(r), "auto"),
+                None => (None, "unknown"),
+            }
+        }
+    };
+
+    let round = match db.get_round(session_id, round_number) {
+        Ok(r) => r,
+        Err(e) => return tool_result_error(&format!("round not found: {e}")),
+    };
+
+    let finding = match db.create_finding(
+        round.id,
+        reviewer,
+        finding_uid,
+        severity,
+        category,
+        title,
+        body,
+        file_path,
+        line_start,
+        line_end,
+        commit_ref,
+        code_snippet,
+        suggestion,
+        grounding_verdict,
+        grounding_rationale,
+        source_finding_id,
+    ) {
+        Ok(f) => f,
+        Err(DbError::Conflict(_)) => {
+            return tool_result_error(&format!(
+                "finding {finding_uid} already exists for round {round_number} reviewer {reviewer}"
+            ));
+        }
+        Err(e) => return tool_result_error(&format!("failed to create finding: {e}")),
+    };
+
+    let result = serde_json::json!({
+        "finding": finding,
+        "commit_ref_source": commit_ref_source,
+    });
+    tool_result_text(&serde_json::to_string_pretty(&result).unwrap_or_default())
+}
+
+fn handle_finding_list(db: &Db, args: &Value) -> Value {
+    let session_id = match args.get("session_id").and_then(|v| v.as_str()) {
+        Some(s) => s,
+        None => return tool_result_error("missing required parameter: session_id"),
+    };
+
+    let round = if let Some(n) = args.get("round").and_then(|v| v.as_i64()) {
+        match db.get_round(session_id, n as i32) {
+            Ok(r) => r,
+            Err(e) => return tool_result_error(&format!("{e}")),
+        }
+    } else {
+        match db.get_latest_round(session_id) {
+            Ok(Some(r)) => r,
+            Ok(None) => return tool_result_error("no rounds exist for this session"),
+            Err(e) => return tool_result_error(&format!("{e}")),
+        }
+    };
+
+    let reviewer = args
+        .get("reviewer")
+        .and_then(|v| v.as_str())
+        .and_then(|s| ReviewerType::from_str(s).ok());
+    let severity = args
+        .get("severity")
+        .and_then(|v| v.as_str())
+        .and_then(|s| Severity::from_str(s).ok());
+    let file_path = args.get("file_path").and_then(|v| v.as_str());
+
+    let findings = match db.list_findings(round.id, reviewer, severity, file_path) {
+        Ok(f) => f,
+        Err(e) => return tool_result_error(&format!("{e}")),
+    };
+
+    let result = serde_json::json!({
+        "session_id": session_id,
+        "round": round.round_number,
+        "count": findings.len(),
+        "findings": findings,
+    });
+    tool_result_text(&serde_json::to_string_pretty(&result).unwrap_or_default())
+}
+
+fn handle_finding_get(db: &Db, args: &Value) -> Value {
+    let id = match args.get("id").and_then(|v| v.as_i64()) {
+        Some(n) => n,
+        None => return tool_result_error("missing required parameter: id"),
+    };
+    let finding = match db.get_finding(id) {
+        Ok(f) => f,
+        Err(e) => return tool_result_error(&format!("{e}")),
+    };
+    tool_result_text(&serde_json::to_string_pretty(&finding).unwrap_or_default())
+}
+
+fn handle_finding_delete(db: &Db, args: &Value) -> Value {
+    let id = match args.get("id").and_then(|v| v.as_i64()) {
+        Some(n) => n,
+        None => return tool_result_error("missing required parameter: id"),
+    };
+    if let Err(e) = db.delete_finding(id) {
+        return tool_result_error(&format!("{e}"));
+    }
+    tool_result_text(&serde_json::json!({"deleted": id}).to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -648,7 +940,7 @@ mod tests {
     #[test]
     fn test_list_tools_count() {
         let tools = list_tools();
-        assert_eq!(tools.as_array().unwrap().len(), 10);
+        assert_eq!(tools.as_array().unwrap().len(), 14);
     }
 
     #[test]
@@ -847,6 +1139,86 @@ mod tests {
         let text = read_result["content"][0]["text"].as_str().unwrap();
         let parsed: Value = serde_json::from_str(text).unwrap();
         assert_eq!(parsed["count"], 1);
+    }
+
+    #[test]
+    fn test_finding_add_and_list() {
+        let db = test_db();
+        let create = call_tool(
+            &db,
+            "session_create",
+            serde_json::json!({"target_path": "/tmp/x.rs", "review_type": "code"}),
+        );
+        let text = create["content"][0]["text"].as_str().unwrap();
+        let created: Value = serde_json::from_str(text).unwrap();
+        let sid = created["session_id"].as_str().unwrap();
+
+        let add = call_tool(
+            &db,
+            "finding_add",
+            serde_json::json!({
+                "session_id": sid,
+                "round": 1,
+                "reviewer": "regular",
+                "finding_uid": "UF-001",
+                "severity": "high",
+                "title": "Missing transaction",
+                "body": "...",
+                "file_path": "/tmp/nonexistent/handler.go",
+                "line_start": 42,
+            }),
+        );
+        assert!(add.get("isError").is_none(), "add returned error: {add}");
+
+        // duplicate uid → conflict
+        let dup = call_tool(
+            &db,
+            "finding_add",
+            serde_json::json!({
+                "session_id": sid, "round": 1, "reviewer": "regular",
+                "finding_uid": "UF-001", "severity": "low",
+                "title": "x", "body": "y", "file_path": "/a", "line_start": 1
+            }),
+        );
+        assert_eq!(dup["isError"], true);
+
+        // list
+        let list = call_tool(
+            &db,
+            "finding_list",
+            serde_json::json!({"session_id": sid}),
+        );
+        let text = list["content"][0]["text"].as_str().unwrap();
+        let parsed: Value = serde_json::from_str(text).unwrap();
+        assert_eq!(parsed["count"], 1);
+        let f = &parsed["findings"][0];
+        assert_eq!(f["finding_uid"], "UF-001");
+        assert_eq!(f["severity"], "high");
+        assert_eq!(f["line_start"], 42);
+    }
+
+    #[test]
+    fn test_finding_add_invalid_severity() {
+        let db = test_db();
+        let create = call_tool(
+            &db,
+            "session_create",
+            serde_json::json!({"target_path": "/tmp/y.rs", "review_type": "code"}),
+        );
+        let created: Value =
+            serde_json::from_str(create["content"][0]["text"].as_str().unwrap()).unwrap();
+        let sid = created["session_id"].as_str().unwrap();
+
+        let r = call_tool(
+            &db,
+            "finding_add",
+            serde_json::json!({
+                "session_id": sid, "round": 1, "reviewer": "regular",
+                "finding_uid": "UF-001", "severity": "blocker",
+                "title": "x", "body": "y", "file_path": "/a", "line_start": 1
+            }),
+        );
+        assert_eq!(r["isError"], true);
     }
 
     #[test]

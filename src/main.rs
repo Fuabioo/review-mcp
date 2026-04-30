@@ -1,5 +1,6 @@
 mod audit;
 mod db;
+mod git;
 mod mcp;
 mod models;
 mod prune;

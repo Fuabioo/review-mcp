@@ -1,6 +1,6 @@
 use crate::models::{
-    now_iso8601, Review, ReviewType, ReviewerType, Round, RoundOutcome, Session, SessionStatus,
-    Signal, SignalType,
+    now_iso8601, Finding, GroundingVerdict, Review, ReviewType, ReviewerType, Round, RoundOutcome,
+    Session, SessionStatus, Severity, Signal, SignalType,
 };
 use rusqlite::{params, Connection, OptionalExtension};
 use std::fmt;
@@ -123,6 +123,33 @@ impl Db {
                 created_at TEXT NOT NULL,
                 UNIQUE(round_id, reviewer_type)
             );
+
+            CREATE TABLE IF NOT EXISTS findings (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                round_id INTEGER NOT NULL REFERENCES rounds(id),
+                reviewer_type TEXT NOT NULL CHECK(reviewer_type IN ('regular','harsh','grounded')),
+                finding_uid TEXT NOT NULL,
+                severity TEXT NOT NULL CHECK(severity IN ('critical','high','medium','low','info')),
+                category TEXT,
+                title TEXT NOT NULL,
+                body TEXT NOT NULL,
+                file_path TEXT NOT NULL,
+                line_start INTEGER NOT NULL,
+                line_end INTEGER,
+                commit_ref TEXT,
+                code_snippet TEXT,
+                suggestion TEXT,
+                grounding_verdict TEXT CHECK(grounding_verdict IN ('confirmed','disputed','rejected')),
+                grounding_rationale TEXT,
+                source_finding_id INTEGER REFERENCES findings(id),
+                created_at TEXT NOT NULL,
+                UNIQUE(round_id, reviewer_type, finding_uid)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_findings_round ON findings(round_id);
+            CREATE INDEX IF NOT EXISTS idx_findings_path ON findings(file_path);
+            CREATE INDEX IF NOT EXISTS idx_findings_severity ON findings(severity);
+            CREATE INDEX IF NOT EXISTS idx_findings_source ON findings(source_finding_id);
 
             CREATE TABLE IF NOT EXISTS signals (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -384,6 +411,143 @@ impl Db {
         Ok(reviews)
     }
 
+    // --- Findings ---
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn create_finding(
+        &self,
+        round_id: i64,
+        reviewer_type: ReviewerType,
+        finding_uid: &str,
+        severity: Severity,
+        category: Option<&str>,
+        title: &str,
+        body: &str,
+        file_path: &str,
+        line_start: i32,
+        line_end: Option<i32>,
+        commit_ref: Option<&str>,
+        code_snippet: Option<&str>,
+        suggestion: Option<&str>,
+        grounding_verdict: Option<GroundingVerdict>,
+        grounding_rationale: Option<&str>,
+        source_finding_id: Option<i64>,
+    ) -> Result<Finding, DbError> {
+        let now = now_iso8601();
+        self.conn.execute(
+            "INSERT INTO findings (
+                round_id, reviewer_type, finding_uid, severity, category,
+                title, body, file_path, line_start, line_end,
+                commit_ref, code_snippet, suggestion,
+                grounding_verdict, grounding_rationale, source_finding_id, created_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
+            params![
+                round_id,
+                reviewer_type.to_string(),
+                finding_uid,
+                severity.to_string(),
+                category,
+                title,
+                body,
+                file_path,
+                line_start,
+                line_end,
+                commit_ref,
+                code_snippet,
+                suggestion,
+                grounding_verdict.map(|v| v.to_string()),
+                grounding_rationale,
+                source_finding_id,
+                now,
+            ],
+        )?;
+        let id = self.conn.last_insert_rowid();
+        self.get_finding(id)
+    }
+
+    pub fn get_finding(&self, id: i64) -> Result<Finding, DbError> {
+        self.conn
+            .query_row(
+                "SELECT id, round_id, reviewer_type, finding_uid, severity, category,
+                        title, body, file_path, line_start, line_end,
+                        commit_ref, code_snippet, suggestion,
+                        grounding_verdict, grounding_rationale, source_finding_id, created_at
+                 FROM findings WHERE id = ?1",
+                params![id],
+                |row| Ok(row_to_finding(row)),
+            )
+            .map_err(|e| match e {
+                rusqlite::Error::QueryReturnedNoRows => DbError::NotFound(format!("finding {id}")),
+                other => DbError::from(other),
+            })
+    }
+
+    pub fn list_findings(
+        &self,
+        round_id: i64,
+        reviewer_type: Option<ReviewerType>,
+        severity: Option<Severity>,
+        file_path: Option<&str>,
+    ) -> Result<Vec<Finding>, DbError> {
+        let mut sql = String::from(
+            "SELECT id, round_id, reviewer_type, finding_uid, severity, category,
+                    title, body, file_path, line_start, line_end,
+                    commit_ref, code_snippet, suggestion,
+                    grounding_verdict, grounding_rationale, source_finding_id, created_at
+             FROM findings WHERE round_id = ?1",
+        );
+        let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(round_id)];
+        if let Some(rt) = reviewer_type {
+            sql.push_str(&format!(" AND reviewer_type = ?{}", params_vec.len() + 1));
+            params_vec.push(Box::new(rt.to_string()));
+        }
+        if let Some(sv) = severity {
+            sql.push_str(&format!(" AND severity = ?{}", params_vec.len() + 1));
+            params_vec.push(Box::new(sv.to_string()));
+        }
+        if let Some(fp) = file_path {
+            sql.push_str(&format!(" AND file_path = ?{}", params_vec.len() + 1));
+            params_vec.push(Box::new(fp.to_string()));
+        }
+        sql.push_str(
+            " ORDER BY CASE severity \
+                  WHEN 'critical' THEN 0 \
+                  WHEN 'high' THEN 1 \
+                  WHEN 'medium' THEN 2 \
+                  WHEN 'low' THEN 3 \
+                  WHEN 'info' THEN 4 \
+                  ELSE 5 END, file_path ASC, line_start ASC, id ASC",
+        );
+        let params_refs: Vec<&dyn rusqlite::ToSql> =
+            params_vec.iter().map(|b| b.as_ref()).collect();
+        let mut stmt = self.conn.prepare(&sql)?;
+        let findings = stmt
+            .query_map(params_refs.as_slice(), |row| Ok(row_to_finding(row)))?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(findings)
+    }
+
+    #[allow(dead_code)] // exposed for audit/CLI
+    pub fn count_findings(&self, round_id: i64) -> Result<i64, DbError> {
+        self.conn
+            .query_row(
+                "SELECT COUNT(*) FROM findings WHERE round_id = ?1",
+                params![round_id],
+                |row| row.get(0),
+            )
+            .map_err(DbError::from)
+    }
+
+    pub fn delete_finding(&self, id: i64) -> Result<(), DbError> {
+        let rows = self
+            .conn
+            .execute("DELETE FROM findings WHERE id = ?1", params![id])?;
+        if rows == 0 {
+            return Err(DbError::NotFound(format!("finding {id}")));
+        }
+        Ok(())
+    }
+
     // --- Signals ---
 
     pub fn create_signal(
@@ -447,8 +611,15 @@ impl Db {
             return Ok(ids);
         }
 
-        // Delete in dependency order: reviews → rounds → signals → sessions
-        // We use subqueries so it's all one transaction worth of work
+        // Delete in dependency order: findings → reviews → rounds → signals → sessions
+        self.conn.execute(
+            "DELETE FROM findings WHERE round_id IN (
+                SELECT r.id FROM rounds r
+                JOIN sessions s ON r.session_id = s.id
+                WHERE s.created_at < ?1
+            )",
+            params![before],
+        )?;
         self.conn.execute(
             "DELETE FROM reviews WHERE round_id IN (
                 SELECT r.id FROM rounds r
@@ -534,6 +705,37 @@ fn row_to_review(row: &rusqlite::Row<'_>) -> Review {
         content_hash: row.get_unwrap(4),
         bytes_written: row.get_unwrap(5),
         created_at: row.get_unwrap(6),
+    }
+}
+
+fn row_to_finding(row: &rusqlite::Row<'_>) -> Finding {
+    Finding {
+        id: row.get_unwrap(0),
+        round_id: row.get_unwrap(1),
+        reviewer_type: row
+            .get_unwrap::<_, String>(2)
+            .parse()
+            .unwrap_or(ReviewerType::Regular),
+        finding_uid: row.get_unwrap(3),
+        severity: row
+            .get_unwrap::<_, String>(4)
+            .parse()
+            .unwrap_or(Severity::Medium),
+        category: row.get_unwrap(5),
+        title: row.get_unwrap(6),
+        body: row.get_unwrap(7),
+        file_path: row.get_unwrap(8),
+        line_start: row.get_unwrap(9),
+        line_end: row.get_unwrap(10),
+        commit_ref: row.get_unwrap(11),
+        code_snippet: row.get_unwrap(12),
+        suggestion: row.get_unwrap(13),
+        grounding_verdict: row
+            .get_unwrap::<_, Option<String>>(14)
+            .and_then(|s| s.parse().ok()),
+        grounding_rationale: row.get_unwrap(15),
+        source_finding_id: row.get_unwrap(16),
+        created_at: row.get_unwrap(17),
     }
 }
 

@@ -155,7 +155,7 @@ mod tests {
         let resp = handle_request(&db, request);
         let result = resp.result.unwrap();
         assert!(result["tools"].is_array());
-        assert_eq!(result["tools"].as_array().unwrap().len(), 10);
+        assert_eq!(result["tools"].as_array().unwrap().len(), 14);
     }
 
     #[test]

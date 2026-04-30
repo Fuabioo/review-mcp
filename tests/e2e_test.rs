@@ -110,7 +110,7 @@ fn test_e2e_tools_list() {
     ]);
     assert_eq!(responses.len(), 2);
     let tools = responses[1]["result"]["tools"].as_array().unwrap();
-    assert_eq!(tools.len(), 10);
+    assert_eq!(tools.len(), 14);
 }
 
 #[test]
