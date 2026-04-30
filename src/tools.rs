@@ -91,7 +91,7 @@ pub fn list_tools() -> Value {
         },
         {
             "name": "review_read",
-            "description": "Read a review. Defaults to the latest round if round is not specified.",
+            "description": "Read a review. Defaults to the latest round if round is not specified. Supports optional compact format for AI agent token optimization (requires REVIEW_MCP_COMPACT=1).",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -107,6 +107,11 @@ pub fn list_tools() -> Value {
                         "type": "string",
                         "enum": ["regular", "harsh", "grounded"],
                         "description": "Reviewer type"
+                    },
+                    "format": {
+                        "type": "string",
+                        "enum": ["raw", "compact"],
+                        "description": "Output format: 'raw' for original markdown, 'compact' for terse pipe-delimited format optimized for AI agents (default: raw). Compact requires REVIEW_MCP_COMPACT=1."
                     }
                 },
                 "required": ["session_id", "reviewer"]
@@ -562,6 +567,27 @@ fn handle_review_read(db: &Db, args: &Value) -> Value {
         Err(e) => return tool_result_error(&format!("failed to read review file: {e}")),
     };
 
+    // Format selection: compact requires REVIEW_MCP_COMPACT=1
+    let format_requested = args
+        .get("format")
+        .and_then(|v| v.as_str())
+        .unwrap_or("raw");
+
+    let (output, format_actual) = if format_requested == "compact" && crate::aaak::is_enabled() {
+        match crate::aaak::compress_review(&content, reviewer) {
+            Ok(compressed) => (compressed, "compact"),
+            Err(e) => {
+                eprintln!(
+                    "review-mcp: compact compression failed for {session_id} r{}: {e}",
+                    round.round_number
+                );
+                (content, "raw")
+            }
+        }
+    } else {
+        (content, "raw")
+    };
+
     let result = serde_json::json!({
         "session_id": session_id,
         "round": round.round_number,
@@ -569,7 +595,9 @@ fn handle_review_read(db: &Db, args: &Value) -> Value {
         "file_path": review.file_path,
         "content_hash": review.content_hash,
         "written_at": review.created_at,
-        "content": content,
+        "format_requested": format_requested,
+        "format": format_actual,
+        "content": output,
     });
     tool_result_text(&serde_json::to_string_pretty(&result).unwrap_or_default())
 }
